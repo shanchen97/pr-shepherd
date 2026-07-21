@@ -1,0 +1,20 @@
+# real config (org / user / paths / notifier id) — only config.example.env is committed
+config.env
+
+# rendered instructions (INSTRUCTIONS.md is the committed {{VAR}} template)
+.INSTRUCTIONS.local.md
+
+# runtime state and generated review reports (contain project data)
+state.json
+reviews/*
+!reviews/.gitkeep
+
+# throwaway review worktrees + single-flight lock
+.worktrees/
+.lock/
+
+# launchd / server runtime logs
+logs/
+
+# macOS
+.DS_Store
