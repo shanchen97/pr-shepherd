@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Example runner agent. Replace __WATCH_DIR__ and install into
-     ~/Library/LaunchAgents with a label you own (e.g. com.you.pr-watch). -->
+<!-- Example runner agent. Replace __SHEPHERD_DIR__ and install into
+     ~/Library/LaunchAgents with a label you own (e.g. com.you.pr-shepherd). -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.example.pr-watch</string>
+    <string>com.example.pr-shepherd</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>__WATCH_DIR__/run.sh</string>
+        <string>__SHEPHERD_DIR__/run.sh</string>
     </array>
 
     <!-- When to run. Add more <dict> entries for multiple times per day. -->
@@ -20,12 +20,12 @@
     </array>
 
     <key>StandardOutPath</key>
-    <string>__WATCH_DIR__/logs/launchd.out.log</string>
+    <string>__SHEPHERD_DIR__/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__WATCH_DIR__/logs/launchd.err.log</string>
+    <string>__SHEPHERD_DIR__/logs/launchd.err.log</string>
 
     <key>WorkingDirectory</key>
-    <string>__WATCH_DIR__</string>
+    <string>__SHEPHERD_DIR__</string>
 
     <key>ProcessType</key>
     <string>Background</string>

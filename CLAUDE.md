@@ -43,6 +43,10 @@ cp config.example.env config.env     # first-time setup
 cp state.example.json state.json     # seed state
 ```
 
-LaunchAgent install (runner + report server) is documented in README.md — templates in `launchd/` with `__WATCH_DIR__` / `__REPORT_PORT__` placeholders substituted via sed.
+LaunchAgent install (runner + report server) is documented in README.md — templates in `launchd/` with `__SHEPHERD_DIR__` / `__REPORT_PORT__` placeholders substituted via sed.
 
 There is no build, lint, or test suite; validation is a manual `./run.sh` plus reading the day's log.
+
+## Commit conventions
+
+Do not add a `Co-Authored-By` trailer (or any AI attribution) to commit messages.

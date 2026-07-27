@@ -1,4 +1,4 @@
-# PR-Watch 巡检指令
+# PR-Shepherd 巡检指令
 
 > 本文件是**模板**。`{{...}}` 占位符由 `run.sh` 在运行时用 `config.env` 的值渲染成
 > `.INSTRUCTIONS.local.md` 后再喂给 Claude。仓库里提交的这份不含任何组织名/用户名/路径。
@@ -166,7 +166,7 @@ git -C <path> worktree remove --force {{WORKTREE_DIR}}/<repo>-<n>
 ### 整体结构
 
 ```
-**PR-Watch 巡检 <YYYY-MM-DD>**
+**PR-Shepherd 巡检 <YYYY-MM-DD>**
 
 **Mine**
 

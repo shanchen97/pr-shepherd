@@ -1,4 +1,4 @@
-# pr-watch
+# pr-shepherd
 
 A headless, scheduled reviewer for a whitelist of GitHub repos. On each tick it
 drives [Claude Code](https://claude.com/claude-code) to:
@@ -43,12 +43,12 @@ links are clickable. Findings are pushed to a notifier CLI (optional).
 3. **LaunchAgents (macOS).** Templates live in `launchd/`. Substitute your paths
    and install:
    ```bash
-   sed "s#__WATCH_DIR__#$PWD#g; s#__REPORT_PORT__#8899#g" \
-     launchd/com.example.pr-watch.plist > ~/Library/LaunchAgents/com.you.pr-watch.plist
-   sed "s#__WATCH_DIR__#$PWD#g; s#__REPORT_PORT__#8899#g" \
-     launchd/com.example.pr-watch-server.plist > ~/Library/LaunchAgents/com.you.pr-watch-server.plist
-   launchctl load ~/Library/LaunchAgents/com.you.pr-watch.plist
-   launchctl load ~/Library/LaunchAgents/com.you.pr-watch-server.plist
+   sed "s#__SHEPHERD_DIR__#$PWD#g; s#__REPORT_PORT__#8899#g" \
+     launchd/com.example.pr-shepherd.plist > ~/Library/LaunchAgents/com.you.pr-shepherd.plist
+   sed "s#__SHEPHERD_DIR__#$PWD#g; s#__REPORT_PORT__#8899#g" \
+     launchd/com.example.pr-shepherd-server.plist > ~/Library/LaunchAgents/com.you.pr-shepherd-server.plist
+   launchctl load ~/Library/LaunchAgents/com.you.pr-shepherd.plist
+   launchctl load ~/Library/LaunchAgents/com.you.pr-shepherd-server.plist
    ```
    The runner agent fires on a schedule (edit `StartCalendarInterval`); the
    server agent keeps the report HTTP server alive.

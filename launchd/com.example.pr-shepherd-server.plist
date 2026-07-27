@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Example report server agent. Serves reviews/ on 127.0.0.1:__REPORT_PORT__ so
-     chat links are clickable. Bound to loopback only. Replace __WATCH_DIR__ and
+     chat links are clickable. Bound to loopback only. Replace __SHEPHERD_DIR__ and
      __REPORT_PORT__ and install with a label you own. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.example.pr-watch-server</string>
+    <string>com.example.pr-shepherd-server</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -17,7 +17,7 @@
         <string>--bind</string>
         <string>127.0.0.1</string>
         <string>--directory</string>
-        <string>__WATCH_DIR__/reviews</string>
+        <string>__SHEPHERD_DIR__/reviews</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -26,9 +26,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>__WATCH_DIR__/logs/server.log</string>
+    <string>__SHEPHERD_DIR__/logs/server.log</string>
     <key>StandardErrorPath</key>
-    <string>__WATCH_DIR__/logs/server.log</string>
+    <string>__SHEPHERD_DIR__/logs/server.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>
