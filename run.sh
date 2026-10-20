@@ -23,6 +23,18 @@ export PATH="${EXTRA_PATH:+$EXTRA_PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bi
 # 一轮深度 review 远超这个时长,必须解除上限;超时兜底交给 .lock 的 3h stale 判定。
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 
+# The run writes state/reports inside this git repo; keep the interactive
+# diff-gate hook from reviewing those writes.
+export DIFF_GATE_INNER=1
+# Mine-line patches are committed in review worktrees; any push from this run
+# fails (env-scoped git config, never touches the repos' own config).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.pushurl GIT_CONFIG_VALUE_0=no-push://pr-shepherd
+export CARGO_TARGET_DIR="${SHEPHERD_CARGO_TARGET:-$HOME/.cache/pr-shepherd-target}"
+# The agent stamps this into state.json when it finishes; the retry loop and
+# the failure alert key off it.
+RUN_ID="$(date +%Y%m%dT%H%M%S)-$$"
+export RUN_ID
+
 LOG_DIR="$SHEPHERD_DIR/logs"
 LOCK_DIR="$SHEPHERD_DIR/.lock"
 WORKTREE_DIR="$SHEPHERD_DIR/.worktrees"
@@ -75,13 +87,21 @@ done <<EOF
 ${REPO_WHITELIST:-}
 EOF
 
-PREV_CHECK=$(jq -r '.last_check' "$SHEPHERD_DIR/state.json" 2>/dev/null)
+# After wake-up the network can take minutes to come back (ENOTFOUND); wait
+# for GitHub before burning a model run.
+for _i in {1..20}; do
+    gh api rate_limit >/dev/null 2>&1 && break
+    echo "[$(date '+%F %T')] GitHub unreachable, waiting ($_i/20)" >>"$LOG"
+    sleep 30
+done
+
+finished() { [ "$(jq -r '.last_run' "$SHEPHERD_DIR/state.json" 2>/dev/null)" = "$RUN_ID" ]; }
 
 # Repo-agnostic cwd: the scan is driven by the whitelist, not by any one repo.
 cd "$SHEPHERD_DIR" || exit 1
 
 run_once() {
-    claude -p "执行 PR-Shepherd 巡检:读取 $INSTRUCTIONS 并严格按其执行(Mine=我自己 PR 的未解决评论;Others=待我 review 的 PR 深度 review + 本地 HTML 报告)。只扫描指令白名单里列出的仓库,逐个都要过。无新内容则静默更新 state 后结束。全程使用中文。" \
+    claude -p "执行 PR-Shepherd 巡检:读取 $INSTRUCTIONS 并严格按其执行(Mine=我自己 PR 的未解决反馈分诊 + 本地补丁 + 复盘;Others=待我 review 的 PR 深度 review + 本地 HTML 报告)。只扫描指令白名单里列出的仓库,逐个都要过。无新内容则静默更新 state 后结束。全程使用中文。" \
         "${ADD_DIRS[@]}" \
         --model "$REVIEW_MODEL" \
         --fallback-model "$FALLBACK_MODEL" \
@@ -91,6 +111,7 @@ run_once() {
             "Bash(gh api:*)" "Bash(gh search:*)" "Bash(gh pr view:*)" "Bash(gh pr diff:*)" \
             "Bash(gh pr list:*)" "Bash(gh pr checks:*)" "Bash(gh run list:*)" "Bash(gh run view:*)" \
             "Bash(git -C:*)" "Bash(git fetch:*)" "Bash(git worktree:*)" "Bash(git show:*)" "Bash(git log:*)" \
+            "Bash(cargo check:*)" "Bash(cargo nextest:*)" \
             "Bash(lark-cli im +messages-send:*)" \
             "Bash(date:*)" "Bash(jq:*)" "Bash(base64:*)" "Bash(mkdir:*)" "Bash(ls:*)" \
             "Read" "Glob" "Grep" "Write" "Edit" "TodoWrite" "Agent" \
@@ -104,21 +125,19 @@ for attempt in 1 2 3; do
     echo "--- attempt $attempt [$(date '+%F %T')] ---" >>"$LOG"
     run_once
     RC=$?
-    NEW_CHECK=$(jq -r '.last_check' "$SHEPHERD_DIR/state.json" 2>/dev/null)
-    [ "$NEW_CHECK" != "$PREV_CHECK" ] && break
+    finished && break
     [ $attempt -lt 3 ] && echo "[$(date '+%F %T')] attempt $attempt 未完成(exit $RC),${attempt}00s 后重试" >>"$LOG" && sleep $((attempt * 100))
 done
 
 echo "=== [$(date '+%F %T')] run end (exit $RC) ===" >>"$LOG"
 
-# 静默失败检测:巡检结束必然推进 last_check。没推进说明这轮被中途杀掉或跑飞了,
-# 而 launchd 只看退出码是看不出来的 —— 主动告警,否则用户只会以为"这小时没新东西"。
-NEW_CHECK=$(jq -r '.last_check' "$SHEPHERD_DIR/state.json" 2>/dev/null)
-if [ "$NEW_CHECK" = "$PREV_CHECK" ]; then
-    echo "[$(date '+%F %T')] WARN: last_check 未推进($PREV_CHECK),本轮可能未完成" >>"$LOG"
+# 静默失败检测:巡检跑完必然把本轮 RUN_ID 写进 state.last_run。没写说明这轮被中途杀掉或跑飞了,
+# 而 launchd 只看退出码是看不出来的 —— 主动告警,否则用户只会以为"今天没新东西"。
+if ! finished; then
+    echo "[$(date '+%F %T')] WARN: last_run 不是本轮 $RUN_ID,本轮未完成" >>"$LOG"
     if [ -n "${NOTIFY_USER_ID:-}" ]; then
         lark-cli im +messages-send --user-id "$NOTIFY_USER_ID" --as bot \
-            --text "[PR-Shepherd] 本轮巡检未正常完成(last_check 未推进,exit $RC),详见 $LOG" >>"$LOG" 2>&1
+            --text "[PR-Shepherd] 本轮巡检未正常完成(exit $RC),详见 $LOG" >>"$LOG" 2>&1
     fi
 fi
 

@@ -5,7 +5,7 @@
 
 两条独立流水线,每次巡检都跑:
 
-- **Mine** — 我(@{{GITHUB_USER}})自己的 open PR:未解决的反馈 → 分析给修复方案
+- **Mine** — 我(@{{GITHUB_USER}})自己的 open PR:未解决的反馈(含 bot)→ 逐条分诊 + 本地准备补丁/回复草稿;已合并的 PR → 复盘
 - **Others** — 待我 review 的 open PR(被点名 + CODEOWNERS 命中):深度 production review → 本地 HTML 报告
 
 ## 扫描范围:白名单驱动,逐仓库枚举
@@ -22,13 +22,13 @@
 
 **不关注 CI**。CI 失败一律不查、不报。
 
-全程**只读 GitHub**:不 mark-read、不发 PR 评论、不提交 review、不改代码、不 push。本地 git 只做只读操作(fetch + detached worktree),绝不动任何仓库的工作树/当前分支。所有产出只进通知消息和本地文件。
+全程**只读 GitHub**:不 mark-read、不发 PR 评论、不 resolve thread、不提交 review、不 push。本地 git 只在 `{{WORKTREE_DIR}}` 下的 worktree 里写(Mine 线在 `shepherd/*` 本地分支上提交补丁),绝不动任何仓库原有的工作树/当前分支/其它分支。所有产出只进通知消息和本地文件。
 
 ## 执行纪律(在 headless 环境下跑,踩过坑)
 
 - **并行,但必须是同步 subagent**(一条消息里发起多个 `Agent`,`run_in_background: false`,阻塞等全部返回)。**绝不用后台 agent** —— 曾经并行派 8 个后台 agent,主会话跑到终点而 agent 还在后台,print 模式的后台等待上限一到就把整个会话连同未完成的 agent 全部终止,退出码还是 0,报告一份没落地。
 - **分批并行**:每批 3–4 个 PR,批次内并行,批次之间落盘一次 state。兼顾并行度与"中途被杀不全盘白跑"。
-- **写文件的分工**:每个 subagent 只写自己那份 HTML 报告(路径互不冲突);`state.json` 一律由主会话在每批返回后统一更新,避免并发写互相覆盖。
+- **写文件的分工**:每个 subagent 只写自己那份 HTML 报告 / 分诊文件 / 复盘文件,只动自己那个 worktree(路径互不冲突);`state.json` 一律由主会话在每批返回后统一更新,避免并发写互相覆盖。
 - **通知消息按下方模板发**,Mine 和 Others 各一条。
 - 不要在 `reviews/` 里留探针文件、临时文件。
 - **Bash 命令不要用 `&&` / `;` / 管道串联多条**。权限白名单按命令前缀匹配,复合命令里只要有一段不匹配整条就被拒(非交互下即静默失败)。一条命令干一件事。
@@ -36,9 +36,10 @@
 
 state 文件 `state.json` 与本文件同目录:
 ```json
-{"last_check": ISO8601, "notified_comments": [id...], "reviewed": {"repo#123": "headSha"}}
+{"last_check": ISO8601, "last_run": "<RUN_ID>", "notified_comments": [id...], "reviewed": {"repo#123": "headSha"},
+ "mine_open": ["repo#123"], "triage_next": {"repo#123": 6}, "retro_done": ["repo#123"]}
 ```
-开始时记录本次时间 `date -u +%Y-%m-%dT%H:%M:%SZ` 备用,结束时无论有无产出都要更新 `last_check`。数组各保留最近 500 条。`reviewed` / `notified_comments` 的 key 一律带仓库名,避免跨仓库编号撞车。
+开始时记录本次时间 `date -u +%Y-%m-%dT%H:%M:%SZ` 备用。结束时**无论有无产出、无论是否有仓库访问失败**,都要把 `last_check` 更新为开始时间、`last_run` 写成 `{{RUN_ID}}`(runner 靠它判断本轮是否跑完)。某个仓库访问失败就跳过它并在通知里说明,不要自创"不推进 last_check"之类的规则。数组各保留最近 500 条。`reviewed` / `notified_comments` 的 key 一律带仓库名,避免跨仓库编号撞车。
 
 ---
 
@@ -76,11 +77,57 @@ gh api graphql -F repo=<repo> -F num=<n> -f query='query($repo:String!,$num:Int!
 gh api repos/{{GITHUB_ORG}}/<repo>/issues/<n>/comments
 gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
 ```
-这类没有 resolved 状态,按时间去重:取 `createdAt > last_check`、作者 ≠ `{{GITHUB_USER}}`、id 不在 `notified_comments` 的。**机器人评论(如 `*[bot]`、CI 预览)一律忽略。** 命中后把它的 node id 记进 `notified_comments`,避免下轮重报。
+这类没有 resolved 状态,按时间去重:取 `createdAt > last_check`、作者 ≠ `{{GITHUB_USER}}`、id 不在 `notified_comments` 的。命中后把它的 node id 记进 `notified_comments`,避免下轮重报。
 
-### 4. 分析
+**bot 的评论同样纳入**(claude[bot]、mega-maxwell[bot]、Secure Analysis 等 review agent,以及代人发 agent 评论的账号)——它们提的问题和人提的一样要处理。只跳过纯噪音:CI 预览、部署链接、"no findings" 的空报告。
 
-读评论指向的代码和 diff 上下文,判断意见是否成立,给**最小干预**的修法;认为无需改也要说清理由。可用该仓库本地 checkout(白名单里的路径)只读参考。
+本轮没有新反馈的 PR,后面 4–6 步全部跳过。
+
+### 4. 准备上下文
+
+1. **PR head worktree**(和 Others 线同一套 fetch,但要留意它可能已存在):
+   - `headRefOid` 取前 7 位记为 `<head7>`,本地分支名 `shepherd/<repo>-<n>-<head7>`,worktree 路径 `{{WORKTREE_DIR}}/<repo>-<n>`。
+   - worktree 路径已存在(上轮残留)→ 先 `git -C <path> worktree remove --force` 再建。
+   - `git -C <path> fetch origin pull/<n>/head`;分支已存在(同一 head 上轮已备过补丁)→ `git -C <path> worktree add <wt> shepherd/<repo>-<n>-<head7>`,在其上继续提交;不存在 → `git -C <path> worktree add -b shepherd/<repo>-<n>-<head7> <wt> FETCH_HEAD`。
+   - 用 `git -C <path> worktree list --porcelain` 查我自己有没有检出该 PR 分支(`headRefName`)的开发 worktree。有就**完全不碰它**,只在分诊文件头部注明它的路径,以及它相对远端 head 有几个未 push 的 commit(`git -C <它的路径> rev-list --count FETCH_HEAD..HEAD`),提醒补丁是基于远端 head 做的。
+2. **决策上下文**:PR body;`{{PR_NOTES_DIR}}/<repo>/<n>.md`(PR note)和 `<n>.design.md`(设计稿,若有)——里面是这个 PR 的假设、non-goals 和关键决策。
+
+### 5. 逐条分诊
+
+先去重:不同 reviewer、不同轮次对同一处同一问题的意见合并为一条,注明全部来源。然后对每条:
+
+- **触发场景**:什么输入/状态 → 什么错误结果;结合部署模型判断生产能否触发,给证据(代码位置、调用路径)。是潜在/防御性问题就直说。
+- **分类**(五选一):真 bug / 指出了更好的设计 / 理论问题 / 与 PR note 的决策冲突(引用那条决策)/ 风格或重复或已修。
+- **处理建议**:修 / 回复 / 需我定。判断看意见本身是否成立:成立且有更好的设计,就照更好的设计提,哪怕改动大;否则最小修法。
+- **修**:在 worktree 的 `shepherd/...` 分支上每条一个 commit(message 写清对应哪条反馈),然后按该仓库的方式验证——Rust 仓库 `cargo check` + 相关 crate 的 `cargo nextest run`(都用 `--manifest-path <wt>/Cargo.toml`);是 bug 就加一个"去掉修复会失败"的测试并实际验证它会失败。验证不过就不提交,写明卡在哪。
+- **指出了更好的设计**:不备补丁,写一段新旧设计对比(改什么、代价、收益),交给我定。
+- **回复**:英文回复草稿,直接可贴;"与决策冲突"的回复要讲清那条决策和理由。
+
+### 6. 写分诊文件
+
+写到 `<本目录>/reviews/triage/<repo>-<n>.md`(追加,不覆盖)。每轮一个 `## <YYYY-MM-DD>` 段,条目编号从 `triage_next["<repo>#<n>"]`(默认 1)起连续往下编,写完更新它。文件头部(首次创建时)写 PR 链接、补丁分支名、开发 worktree 提醒(若有)。每条:
+
+```
+### <编号>. <一句话问题> — <来源: 作者 · 文件:行号 或 PR 评论>
+分类 / 生产可触发:<…>
+分析:<触发场景、证据>
+建议:修 | 回复 | 需你定
+补丁:<commit sha 短号 + 一句改了什么 + 验证结果>   (仅"修")
+回复草稿:<英文>                                    (仅"回复")
+```
+
+---
+
+## 复盘:我已合并的 PR
+
+`mine_open` 记录上一轮我所有 open 的 PR。本轮枚举后,对其中不再 open、已 merged、且不在 `retro_done` 里的,各做一次复盘(subagent):
+
+1. 拉全部 review thread、PR 级评论、review 正文和 commit 历史。找出**导致了真实修改**的反馈:反馈之后有 commit 改了它指向的代码,或回复里确认已修。
+2. 对每条:它抓到了什么问题;按问题性质判断,开发时的每轮审查(只查正确性、回复与 diff 是否一致、与 PR note 是否一致、是否超出需求)或提 PR 前的结构审查(thermo-nuclear code quality review)为什么没抓到;还是属于设计阶段就该定下来的事。
+3. 归纳教训,写成**候选**改进:可以加进个人规则文件的一条规则,或对某个审查提示词的调整。只写建议,**不改任何规则/提示词文件**。
+4. 写到 `<本目录>/reviews/triage/retro-<repo>-<n>.md`,记入 `retro_done`;删除该 PR 的 `shepherd/<repo>-<n>-*` 本地分支(`git -C <path> branch -D`)。
+
+结束时把本轮所有 open 的 Mine PR 写回 `mine_open`。
 
 ---
 
@@ -171,15 +218,17 @@ git -C <path> worktree remove --force {{WORKTREE_DIR}}/<repo>-<n>
 **Mine**
 
 [<PR 标题>](<GitHub 链接>)
-- **<发起人>** · `<文件:行号 或 "PR 评论">`:<问题,一两句说清>
-  修复:<你认为应该怎么改,最小干预;若认为不需要改,说明理由>
-- **<发起人>** · ...
+新反馈 <N> 条:已备补丁 <a>、建议回复 <b>、需你定 <c> — [分诊]({{REPORT_BASE_URL}}/triage/<repo>-<n>.md)
 
 [<下一个 PR 标题>](<GitHub 链接>)
 ...
+
+**复盘**
+
+[<已合并 PR 标题>](<GitHub 链接>) — <候选改进条数> 条候选改进 — [复盘]({{REPORT_BASE_URL}}/triage/retro-<repo>-<n>.md)
 ```
 
-**以一条未解决反馈为单位**(行内 thread 或 PR 级评论);作者只写**该反馈的发起人**,跟帖者不列进作者,但跟帖里的实质内容可以并入问题描述。同一处代码有多条独立线程就分别列,不要合并。
+每个 PR 一行计数加分诊链接,细节全在分诊文件里。
 
 **不要**写 CI 状态、thread 计数、积压天数、"全绿"之类的元信息。
 
@@ -207,6 +256,6 @@ Mine 之后紧接 Others:
 
 ## 收尾
 
-- 两条线都无产出 → 静默,不发任何通知
-- 移除本轮建立的所有临时 worktree(`git -C <path> worktree remove --force ...`)
-- 更新 state.json:`last_check`、`notified_comments`、`reviewed`
+- 两条线和复盘都无产出 → 静默,不发任何通知
+- 移除本轮建立的所有临时 worktree(`git -C <path> worktree remove --force ...`);`shepherd/*` 分支保留(补丁在上面,等我挑选)
+- 更新 state.json:`last_check`、`last_run`、`notified_comments`、`reviewed`、`mine_open`、`triage_next`、`retro_done`

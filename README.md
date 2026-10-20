@@ -17,8 +17,9 @@ links are clickable. Findings are pushed to a notifier CLI (optional).
 
 - **Whitelist-driven, repo-agnostic.** The set of repos scanned is exactly the
   `REPO_WHITELIST` in `config.env` — nothing is hardcoded to a particular repo.
-- **Read-only.** It never comments, reviews, pushes, or mutates any working tree;
-  local git use is limited to `fetch` + detached worktrees.
+- **Read-only against GitHub.** It never comments, resolves, reviews, or pushes
+  (pushes are blocked by env-scoped git config); local writes are limited to
+  review worktrees under `.worktrees/` and their `shepherd/*` patch branches.
 - **All environment-specific values are injected from config.** `run.sh` sources
   `config.env` and renders `INSTRUCTIONS.md` (a `{{VAR}}` template) into a local
   copy fed to Claude. The committed repo contains no org, username, path, port,

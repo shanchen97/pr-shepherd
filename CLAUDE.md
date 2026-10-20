@@ -23,7 +23,7 @@ The whole system is three moving parts:
 
 ## Invariants (do not break when editing)
 
-- **Read-only against GitHub and the source repos.** No commenting, no submitting reviews, no pushes; local git use is limited to `fetch` + detached worktrees under `.worktrees/`. The user's working trees and current branches are never touched.
+- **Read-only against GitHub.** No commenting, no resolving threads, no submitting reviews, no pushes (`run.sh` sets an env-scoped `remote.origin.pushurl` that makes any push fail). Local git writes are limited to worktrees under `.worktrees/` and the Mine line's `shepherd/<repo>-<n>-<head7>` patch branches. The user's working trees, current branches and other branches are never touched.
 - **Whitelist-driven and repo-agnostic.** Every repo in `REPO_WHITELIST` gets both pipelines every tick — nothing else is scanned, and no repo is skipped.
 - The committed `INSTRUCTIONS.md` must stay a placeholder template; personal/org values only ever appear in the rendered `.INSTRUCTIONS.local.md` (gitignored).
 
