@@ -63,9 +63,9 @@ draft 也算(自己的 PR 上有人留言同样要知道)。按 `baseRefName` �
 gh api graphql -F repo=<repo> -F num=<n> -f query='query($repo:String!,$num:Int!){
   repository(owner:"{{GITHUB_ORG}}",name:$repo){pullRequest(number:$num){
     reviewThreads(first:100){nodes{ id isResolved isOutdated path line
-      comments(first:20){nodes{ id author{login} createdAt body }}}}}}}'
+      comments(last:20){nodes{ id author{login} createdAt body }}}}}}}'
 ```
-取 `isResolved == false` 且线程里有他人评论的。**只要还没 resolve 就一直算待处理**,无论多久之前提的。
+取 `isResolved == false` 且线程里有他人评论的。**只要还没 resolve 就一直算待处理**,无论多久之前提的。例外:线程**最后一条评论的作者是 `{{GITHUB_USER}}`** 时跳过——我已回应,球在对方;对方再回复后最后一条变了,自然重新进入。
 
 去重:key = `<repo>:<thread id>:<最后一条评论 id>`。已在 `notified_comments` 里就不再提醒;线程有**新回复**时 key 变化,会重新提醒。
 
