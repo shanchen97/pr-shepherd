@@ -37,6 +37,9 @@ export RUN_ID
 
 LOG_DIR="$SHEPHERD_DIR/logs"
 LOCK_DIR="$SHEPHERD_DIR/.lock"
+# Scratch files the run writes (GraphQL queries, diffs); the run itself has no
+# rm, so the runner clears them on exit.
+TMP_DIR="$SHEPHERD_DIR/.tmp"
 WORKTREE_DIR="$SHEPHERD_DIR/.worktrees"
 export SHEPHERD_DIR WORKTREE_DIR
 mkdir -p "$LOG_DIR" "$SHEPHERD_DIR/reviews" "$WORKTREE_DIR"
@@ -72,7 +75,7 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         exit 0
     fi
 fi
-trap 'rm -rf "$LOCK_DIR"' EXIT
+trap 'rm -rf "$LOCK_DIR" "$TMP_DIR"' EXIT
 
 echo "=== [$(date '+%F %T')] run start ===" >>"$LOG"
 

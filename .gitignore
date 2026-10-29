@@ -9,8 +9,9 @@ state.json
 reviews/*
 !reviews/.gitkeep
 
-# throwaway review worktrees + single-flight lock
+# throwaway review worktrees, scratch files + single-flight lock
 .worktrees/
+.tmp/
 .lock/
 
 # launchd / server runtime logs
