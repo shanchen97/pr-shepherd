@@ -28,7 +28,8 @@
 
 - **并行,但必须是同步 subagent**(一条消息里发起多个 `Agent`,`run_in_background: false`,阻塞等全部返回)。**绝不用后台 agent** —— 曾经并行派 8 个后台 agent,主会话跑到终点而 agent 还在后台,print 模式的后台等待上限一到就把整个会话连同未完成的 agent 全部终止,退出码还是 0,报告一份没落地。
 - **分批并行**:每批 3–4 个 PR,批次内并行,批次之间落盘一次 state。兼顾并行度与"中途被杀不全盘白跑"。
-- **写文件的分工**:每个 subagent 只写自己那份 HTML 报告 / 分诊文件 / 复盘文件,只动自己那个 worktree(路径互不冲突);`state.json` 一律由主会话在每批返回后统一更新,避免并发写互相覆盖。
+- **写文件的分工**:每个 subagent 只写自己那份 review 报告 / 分诊页 / 复盘页,只动自己那个 worktree(路径互不冲突);`state.json` 一律由主会话在每批返回后统一更新,避免并发写互相覆盖。
+- **会话 id**:启动 prompt 里给出了本轮会话 id。派 Mine 分诊和复盘的 subagent 时把它原样写进 subagent 的 prompt,分诊页和复盘页要记录它——之后的交互会话靠它找回本轮的完整记录。
 - **通知消息按下方模板发**,Mine 和 Others 各一条。
 - 不要在 `reviews/` 里留探针文件、临时文件。
 - **Bash 命令不要用 `&&` / `;` / 管道串联多条**。权限白名单按命令前缀匹配,复合命令里只要有一段不匹配整条就被拒(非交互下即静默失败)。一条命令干一件事。
@@ -63,7 +64,7 @@ draft 也算(自己的 PR 上有人留言同样要知道)。按 `baseRefName` �
 gh api graphql -F repo=<repo> -F num=<n> -f query='query($repo:String!,$num:Int!){
   repository(owner:"{{GITHUB_ORG}}",name:$repo){pullRequest(number:$num){
     reviewThreads(first:100){nodes{ id isResolved isOutdated path line
-      comments(last:20){nodes{ id author{login} createdAt body }}}}}}}'
+      comments(last:20){nodes{ id url author{login} createdAt body }}}}}}}'
 ```
 取 `isResolved == false` 且线程里有他人评论的。**只要还没 resolve 就一直算待处理**,无论多久之前提的。例外:线程**最后一条评论的作者是 `{{GITHUB_USER}}`** 时跳过——我已回应,球在对方;对方再回复后最后一条变了,自然重新进入。
 
@@ -89,7 +90,7 @@ gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
    - `headRefOid` 取前 7 位记为 `<head7>`,本地分支名 `shepherd/<repo>-<n>-<head7>`,worktree 路径 `{{WORKTREE_DIR}}/<repo>-<n>`。
    - worktree 路径已存在(上轮残留)→ 先 `git -C <path> worktree remove --force` 再建。
    - `git -C <path> fetch origin pull/<n>/head`;分支已存在(同一 head 上轮已备过补丁)→ `git -C <path> worktree add <wt> shepherd/<repo>-<n>-<head7>`,在其上继续提交;不存在 → `git -C <path> worktree add -b shepherd/<repo>-<n>-<head7> <wt> FETCH_HEAD`。
-   - 用 `git -C <path> worktree list --porcelain` 查我自己有没有检出该 PR 分支(`headRefName`)的开发 worktree。有就**完全不碰它**,只在分诊文件头部注明它的路径,以及它相对远端 head 有几个未 push 的 commit(`git -C <它的路径> rev-list --count FETCH_HEAD..HEAD`),提醒补丁是基于远端 head 做的。
+   - 用 `git -C <path> worktree list --porcelain` 查我自己有没有检出该 PR 分支(`headRefName`)的开发 worktree。有就**完全不碰它**,只在分诊页头部注明它的路径,以及它相对远端 head 有几个未 push 的 commit(`git -C <它的路径> rev-list --count FETCH_HEAD..HEAD`),提醒补丁是基于远端 head 做的。
 2. **决策上下文**:PR body;`{{PR_NOTES_DIR}}/<repo>/<n>.md`(PR note)和 `<n>.design.md`(设计稿,若有)——里面是这个 PR 的假设、non-goals 和关键决策。
 
 ### 5. 逐条分诊
@@ -103,18 +104,20 @@ gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
 - **指出了更好的设计**:不备补丁,写一段新旧设计对比(改什么、代价、收益),交给我定。
 - **回复**:英文回复草稿,直接可贴;"与决策冲突"的回复要讲清那条决策和理由。
 
-### 6. 写分诊文件
+### 6. 写分诊页
 
-写到 `<本目录>/reviews/triage/<repo>-<n>.md`(追加,不覆盖)。每轮一个 `## <YYYY-MM-DD>` 段,条目编号从 `triage_next["<repo>#<n>"]`(默认 1)起连续往下编,写完更新它。文件头部(首次创建时)写 PR 链接、补丁分支名、开发 worktree 提醒(若有)。每条:
+写到 `<本目录>/reviews/triage/<repo>-<n>.html`。分诊页也是交接文档:之后我会在新的交互会话里只凭它说"第 N 条照方案改",那个会话没有本轮上下文,所以**每条都要自成一体**——不读本轮记录、不翻其它条目,也能直接动手。
 
-```
-### <编号>. <一句话问题> — <来源: 作者 · 文件:行号 或 PR 评论>
-分类 / 生产可触发:<…>
-分析:<触发场景、证据>
-建议:修 | 回复 | 需你定
-补丁:<commit sha 短号 + 一句改了什么 + 验证结果>   (仅"修")
-回复草稿:<英文>                                    (仅"回复")
-```
+- **首次创建**:照 `<本目录>/templates/triage.html` 的骨架写——`<head>` 样式、末尾 `<script>`、页面结构(含 `<div id="rounds">` 容器)原样保留,示例内容和注释换成真实内容。头部写 PR 链接、补丁分支、开发 worktree 提醒(若有)、PR note 是否存在。
+- **之后每轮追加,不覆盖**:用 Edit 把新一轮 `<section class="round">` 整段插到 `<div id="rounds">` 那行之后,最新一轮在最上面;头部信息有变(新 head 的补丁分支、开发 worktree 状态)就同步改。
+- **段头**:日期时间、本轮会话 id(`data-session` 属性和正文都写)、远端 head、修 / 回复 / 需你定 各几条。
+- **条目**:编号从 `triage_next["<repo>#<n>"]`(默认 1)起连续往下编,写完更新它。每条一个 `<article class="item" id="item-<编号>">`,属性:
+  - `data-action`:`fix` / `reply` / `decide`,对应 修 / 回复 / 需你定
+  - `data-head`:分析所基于的远端 head 短 sha
+  - `data-commit`:补丁 commit 短 sha(仅 `fix`)
+  - `data-source`:原评论的 GitHub 链接(GraphQL 的 `url`、REST 的 `html_url`);合并了多条意见时取第一条,其余写进来源行
+- **条目内容**:标题(一句话问题 + 动作徽章)、来源行(作者 · 文件:行号 或 PR 评论)、分类 / 生产可触发、分析(触发场景和证据,落到文件:行号)、补丁(仅修:commit + 改了什么 + 验证结果)、新旧设计对比(仅"指出了更好的设计":改什么、代价、收益,具体到能照着实现)、回复草稿(仅回复)。
+- 回复草稿、拟贴进 PR body 的段落、diff 一律放 `<pre>`,内容是可直接粘贴的原文(GitHub markdown 原样保留),只做 HTML 转义(`&` `<` `>`);页面脚本会给每个 `<pre>` 加复制按钮。正文里的代码/路径用 `<code>`,同样转义。
 
 ---
 
@@ -125,7 +128,7 @@ gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
 1. 拉全部 review thread、PR 级评论、review 正文和 commit 历史。找出**导致了真实修改**的反馈:反馈之后有 commit 改了它指向的代码,或回复里确认已修。
 2. 对每条:它抓到了什么问题;按问题性质判断,开发时的每轮审查(只查正确性、回复与 diff 是否一致、与 PR note 是否一致、是否超出需求)或提 PR 前的结构审查(thermo-nuclear code quality review)为什么没抓到;还是属于设计阶段就该定下来的事。
 3. 归纳教训,写成**候选**改进:可以加进个人规则文件的一条规则,或对某个审查提示词的调整。只写建议,**不改任何规则/提示词文件**。
-4. 写到 `<本目录>/reviews/triage/retro-<repo>-<n>.md`,记入 `retro_done`;删除该 PR 的 `shepherd/<repo>-<n>-*` 本地分支(`git -C <path> branch -D`)。
+4. 写到 `<本目录>/reviews/triage/retro-<repo>-<n>.html`,照 `<本目录>/templates/retro.html` 的骨架写,头部记本轮会话 id。每条导致修改的反馈一个 `id="item-<k>"`,带 `data-commit`(对应修改)和 `data-source`(原评论链接);每条候选改进一个 `id="c-<k>"`,`data-kind` 为 `rule` / `prompt`,拟改原文放 `<pre>`(规则同分诊页)。记入 `retro_done`;删除该 PR 的 `shepherd/<repo>-<n>-*` 本地分支(`git -C <path> branch -D`)。
 
 结束时把本轮所有 open 的 Mine PR 写回 `mine_open`。
 
@@ -218,17 +221,17 @@ git -C <path> worktree remove --force {{WORKTREE_DIR}}/<repo>-<n>
 **Mine**
 
 [<PR 标题>](<GitHub 链接>)
-新反馈 <N> 条:已备补丁 <a>、建议回复 <b>、需你定 <c> — [分诊]({{REPORT_BASE_URL}}/triage/<repo>-<n>.md)
+新反馈 <N> 条:已备补丁 <a>、建议回复 <b>、需你定 <c> — [分诊]({{REPORT_BASE_URL}}/triage/<repo>-<n>.html)
 
 [<下一个 PR 标题>](<GitHub 链接>)
 ...
 
 **复盘**
 
-[<已合并 PR 标题>](<GitHub 链接>) — <候选改进条数> 条候选改进 — [复盘]({{REPORT_BASE_URL}}/triage/retro-<repo>-<n>.md)
+[<已合并 PR 标题>](<GitHub 链接>) — <候选改进条数> 条候选改进 — [复盘]({{REPORT_BASE_URL}}/triage/retro-<repo>-<n>.html)
 ```
 
-每个 PR 一行计数加分诊链接,细节全在分诊文件里。
+每个 PR 一行计数加分诊链接,细节全在分诊页里。
 
 **不要**写 CI 状态、thread 计数、积压天数、"全绿"之类的元信息。
 

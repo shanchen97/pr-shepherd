@@ -71,10 +71,11 @@ in `config.env` — the launchd environment is minimal.
 |---|---|---|
 | `run.sh` | yes | Runner: loads config, renders instructions, drives Claude |
 | `INSTRUCTIONS.md` | yes | Review spec — a `{{VAR}}` template, no personal data |
+| `templates/` | yes | HTML skeletons for the Mine triage and retro pages |
 | `config.example.env` | yes | Config template |
 | `config.env` | no (gitignored) | Real org/user/paths/notifier id |
 | `state.example.json` | yes | Empty state seed |
 | `state.json` | no | Runtime dedup state |
-| `reviews/` | no (`.gitkeep` only) | Generated HTML reports |
+| `reviews/` | no (`.gitkeep` only) | Generated HTML reports; `reviews/triage/` holds triage and retro pages |
 | `logs/`, `.lock/`, `.worktrees/` | no | Runtime artifacts |
 | `launchd/` | yes | Example LaunchAgent plists |
