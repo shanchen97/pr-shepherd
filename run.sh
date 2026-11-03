@@ -107,13 +107,19 @@ cd "$SHEPHERD_DIR" || exit 1
 # later interactive session can find this run's transcript.
 run_once() {
     local session_id
+    local -a model_args=()
+    if [ -n "${REVIEW_MODEL:-}" ]; then
+        model_args+=(--model "$REVIEW_MODEL")
+    fi
+    if [ -n "${FALLBACK_MODEL:-}" ]; then
+        model_args+=(--fallback-model "$FALLBACK_MODEL")
+    fi
     session_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
     echo "session $session_id" >>"$LOG"
     claude -p "执行 PR-Shepherd 巡检:读取 $INSTRUCTIONS 并严格按其执行(Mine=我自己 PR 的未解决反馈分诊 + 本地补丁 + 复盘;Others=待我 review 的 PR 深度 review + 本地 HTML 报告)。只扫描指令白名单里列出的仓库,逐个都要过。无新内容则静默更新 state 后结束。全程使用中文。本轮会话 id:$session_id" \
         --session-id "$session_id" \
         "${ADD_DIRS[@]}" \
-        --model "$REVIEW_MODEL" \
-        --fallback-model "$FALLBACK_MODEL" \
+        ${model_args[@]+"${model_args[@]}"} \
         --effort high \
         --permission-mode acceptEdits \
         --allowedTools \
