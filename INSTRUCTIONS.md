@@ -1,7 +1,7 @@
 # PR-Shepherd 巡检指令
 
 > 本文件是**模板**。`{{...}}` 占位符由 `run.sh` 在运行时用 `config.env` 的值渲染成
-> `.INSTRUCTIONS.local.md` 后再喂给 Claude。仓库里提交的这份不含任何组织名/用户名/路径。
+> `.INSTRUCTIONS.local.md` 后交给配置的 agent。仓库里提交的这份不含任何组织名/用户名/路径。
 
 两条独立流水线,每次巡检都跑:
 
@@ -26,21 +26,21 @@
 
 ## 执行纪律(在 headless 环境下跑,踩过坑)
 
-- **并行,但必须是同步 subagent**(一条消息里发起多个 `Agent`,`run_in_background: false`,阻塞等全部返回)。**绝不用后台 agent** —— 曾经并行派 8 个后台 agent,主会话跑到终点而 agent 还在后台,print 模式的后台等待上限一到就把整个会话连同未完成的 agent 全部终止,退出码还是 0,报告一份没落地。
-- **分批并行**:每批 3–4 个 PR,批次内并行,批次之间落盘一次 state。兼顾并行度与"中途被杀不全盘白跑"。
-- **写文件的分工**:每个 subagent 只写自己那份 review 报告 / 分诊页 / 复盘页,只动自己那个 worktree(路径互不冲突);`state.json` 一律由主会话在每批返回后统一更新,避免并发写互相覆盖。
-- **会话 id**:启动 prompt 里给出了本轮会话 id。派 Mine 分诊和复盘的 subagent 时把它原样写进 subagent 的 prompt,分诊页和复盘页要记录它——之后的交互会话靠它找回本轮的完整记录。
-- **通知消息按下方模板发**,Mine 和 Others 各一条。
-- 临时文件(GraphQL 查询、diff、探针输出等)一律写到 `<本目录>/.tmp/`,不要放进 `reviews/` 或别处;runner 在本轮结束时整个清掉 `.tmp/`,不用自己删。
-- **Bash 命令不要用 `&&` / `;` / 管道串联多条**。权限白名单按命令前缀匹配,复合命令里只要有一段不匹配整条就被拒(非交互下即静默失败)。一条命令干一件事。
-- 写文件一律用 Write/Edit 工具,不要用 `cat > file` 之类的 shell 重定向(不在白名单里)。
+- **任何错误立即宣告本轮失败**:包括权限拒绝、工具错误、命令执行失败、API/网络错误、测试失败和报告校验失败。不要重试、换工具绕过、跳过失败仓库或继续生成报告。将失败步骤、工具/命令和原始错误写入 `{{FAILURE_FILE}}` 后立即结束;runner 负责发送失败通知。无法写文件时直接输出错误并结束。
+- **主 agent 顺序执行**,不派子代理,不启动后台任务。Cursor 的 CLI 输出不暴露子代理内部工具事件,顺序执行让 runner 在每次工具错误时立即停止本轮。
+- 每完成一个 PR 可保存进度,但只在所有任务和通知成功后写入 `last_run`。失败的 PR 不得记为已审查或已通知。
+- **本轮标识**:启动 prompt 给出了 run/session 标识,分诊页和复盘页的 `data-session` 记录它。Claude 使用原生 session id;Cursor 使用 runner 的 run id,实际 CLI session id 见当日日志的 init 事件。
+- **通知消息按下方模板发**。失败通知由 runner 负责,不要重复发送。
+- 临时文件(GraphQL 查询、diff、探针输出等)一律写到 `<本目录>/.tmp/`;runner 在结束时清理。
+- 一次 shell 调用只执行一项操作,不要用管道、串联或 `|| true` 隐藏中间错误。命令必须等待结束。搜索优先用原生搜索工具;需要 shell 搜索时使用单条 `rg` / `grep`。它们无输出、无诊断且退出码为 1 表示正常无匹配,不算执行错误;退出码 2 等真实错误仍立即失败。读取可选文件前先检查是否存在。
+- 使用当前 agent 提供的文件读写、搜索和 shell 工具。允许使用脚本生成及校验完整 HTML diff,不要手算或手抄压缩数据。
 
 state 文件 `state.json` 与本文件同目录:
 ```json
 {"last_check": ISO8601, "last_run": "<RUN_ID>", "notified_comments": [id...], "reviewed": {"repo#123": "headSha"},
  "mine_open": ["repo#123"], "triage_next": {"repo#123": 6}, "retro_done": ["repo#123"]}
 ```
-开始时记录本次时间 `date -u +%Y-%m-%dT%H:%M:%SZ` 备用。结束时**无论有无产出、无论是否有仓库访问失败**,都要把 `last_check` 更新为开始时间、`last_run` 写成 `{{RUN_ID}}`(runner 靠它判断本轮是否跑完)。某个仓库访问失败就跳过它并在通知里说明,不要自创"不推进 last_check"之类的规则。数组各保留最近 500 条。`reviewed` / `notified_comments` 的 key 一律带仓库名,避免跨仓库编号撞车。
+开始时记录本次时间 `date -u +%Y-%m-%dT%H:%M:%SZ` 备用。仅在整轮成功且通知发送成功后,把 `last_check` 更新为开始时间、`last_run` 写成 `{{RUN_ID}}`(runner 验证本轮完成)。无产出的正常成功轮次同样更新。任何错误直接失败,不写本轮完成标记。数组各保留最近 500 条。`reviewed` / `notified_comments` 的 key 一律带仓库名,避免跨仓库编号撞车。
 
 ---
 
@@ -100,7 +100,7 @@ gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
 - **触发场景**:什么输入/状态 → 什么错误结果;结合部署模型判断生产能否触发,给证据(代码位置、调用路径)。是潜在/防御性问题就直说。
 - **分类**(五选一):真 bug / 指出了更好的设计 / 理论问题 / 与 PR note 的决策冲突(引用那条决策)/ 风格或重复或已修。
 - **处理建议**:修 / 回复 / 需我定。判断看意见本身是否成立:成立且有更好的设计,就照更好的设计提,哪怕改动大;否则最小修法。
-- **修**:在 worktree 的 `shepherd/...` 分支上每条一个 commit(message 写清对应哪条反馈),然后按该仓库的方式验证——Rust 仓库 `cargo check` + 相关 crate 的 `cargo nextest run`(都用 `--manifest-path <wt>/Cargo.toml`);是 bug 就加一个"去掉修复会失败"的测试并实际验证它会失败。验证不过就不提交,写明卡在哪。
+- **修**:在 worktree 的 `shepherd/...` 分支上每条一个 commit(message 写清对应哪条反馈),然后按该仓库的方式验证——Rust 仓库 `cargo check` + 相关 crate 的 `cargo nextest run`(都用 `--manifest-path <wt>/Cargo.toml`);是 bug 就加一个覆盖触发场景的行为回归测试并运行通过。验证失败就立即终止本轮,不提交,把具体原因写入失败文件。
 - **指出了更好的设计**:不备补丁,写一段新旧设计对比(改什么、代价、收益),交给我定。
 - **回复**:英文回复草稿,直接可贴;"与决策冲突"的回复要讲清那条决策和理由。
 
@@ -123,7 +123,7 @@ gh api repos/{{GITHUB_ORG}}/<repo>/pulls/<n>/reviews
 
 ## 复盘:我已合并的 PR
 
-`mine_open` 记录上一轮我所有 open 的 PR。本轮枚举后,对其中不再 open、已 merged、且不在 `retro_done` 里的,各做一次复盘(subagent):
+`mine_open` 记录上一轮我所有 open 的 PR。本轮枚举后,对其中不再 open、已 merged、且不在 `retro_done` 里的,依次做一次复盘:
 
 1. 拉全部 review thread、PR 级评论、review 正文和 commit 历史。找出**导致了真实修改**的反馈:反馈之后有 commit 改了它指向的代码,或回复里确认已修。
 2. 对每条:它抓到了什么问题;按问题性质判断,开发时的每轮审查(只查正确性、回复与 diff 是否一致、与 PR note 是否一致、是否超出需求)或提 PR 前的结构审查(thermo-nuclear code quality review)为什么没抓到;还是属于设计阶段就该定下来的事。
@@ -169,7 +169,7 @@ git -C <path> worktree add --detach {{WORKTREE_DIR}}/<repo>-<n> FETCH_HEAD
 ```bash
 git -C <path> worktree remove --force {{WORKTREE_DIR}}/<repo>-<n>
 ```
-白名单里没有本地路径的仓库(理论上不该有),回退到 `gh pr diff` / `gh api .../contents`,并在报告头部标注"无本地树,仅基于 diff"。
+缺失本地 checkout 是配置错误,直接宣告本轮失败,不降级为仅基于 diff 的审查。
 
 ### 4. 深度 review(认真做)
 
